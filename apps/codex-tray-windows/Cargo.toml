@@ -1,0 +1,10 @@
+[package]
+name = "codex-tray-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+codex-usage-core.workspace = true
+tao = "0.34"
+tray-icon = "0.25"

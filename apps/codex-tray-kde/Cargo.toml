@@ -1,0 +1,11 @@
+[package]
+name = "codex-tray-kde"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+codex-usage-core.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", features = ["blocking"] }
