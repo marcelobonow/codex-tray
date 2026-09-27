@@ -15,6 +15,7 @@ mod linux {
     struct KdeTray {
         status_text: String,
         tooltip: String,
+        icon_rows: (String, String),
         failed: bool,
         monitor: UsageMonitorController,
     }
@@ -26,6 +27,7 @@ mod linux {
                 MonitorUpdate::Error(message) => {
                     self.status_text = message.clone();
                     self.tooltip = format!("Codex Tray\n{message}");
+                    self.icon_rows = ("!".into(), "!".into());
                     self.failed = true;
                 }
             }
@@ -34,6 +36,7 @@ mod linux {
         fn apply_snapshot(&mut self, snapshot: UsageSnapshot) {
             self.status_text = snapshot.summary();
             self.tooltip = snapshot.tooltip(SystemTime::now());
+            self.icon_rows = snapshot.icon_usage_rows();
             self.failed = false;
         }
     }
@@ -50,11 +53,15 @@ mod linux {
         }
 
         fn icon_name(&self) -> String {
-            if self.failed {
-                "dialog-error".into()
-            } else {
-                "utilities-terminal".into()
-            }
+            String::new()
+        }
+
+        fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+            vec![usage_icon(
+                &self.icon_rows.0,
+                &self.icon_rows.1,
+                self.failed,
+            )]
         }
 
         fn status(&self) -> Status {
@@ -68,6 +75,7 @@ mod linux {
         fn tool_tip(&self) -> ToolTip {
             ToolTip {
                 icon_name: self.icon_name(),
+                icon_pixmap: self.icon_pixmap(),
                 title: "Codex Tray".into(),
                 description: self.tooltip.clone(),
                 ..Default::default()
@@ -111,6 +119,7 @@ mod linux {
         let tray = KdeTray {
             status_text: "Consultando uso do Codex…".into(),
             tooltip: "Codex Tray\nConsultando uso…".into(),
+            icon_rows: ("—".into(), "—".into()),
             failed: false,
             monitor: monitor.controller(),
         };
@@ -121,6 +130,103 @@ mod linux {
         }
 
         Ok(())
+    }
+
+    fn usage_icon(top: &str, bottom: &str, failed: bool) -> ksni::Icon {
+        let mut rgba = vec![0; 32 * 32 * 4];
+        draw_icon_row(&mut rgba, top, 1, failed);
+        draw_icon_row(&mut rgba, bottom, 17, failed);
+
+        for pixel in rgba.chunks_exact_mut(4) {
+            pixel.rotate_right(1);
+        }
+
+        ksni::Icon {
+            width: 32,
+            height: 32,
+            data: rgba,
+        }
+    }
+
+    fn draw_icon_row(rgba: &mut [u8], text: &str, start_y: usize, failed: bool) {
+        let glyphs: Vec<[u8; 5]> = text.chars().map(glyph).collect();
+        let (scale_x, glyph_stride) = row_layout(glyphs.len());
+        let layout = (scale_x, 3, glyph_stride);
+        let width = glyphs.len().saturating_mul(glyph_stride);
+        let start_x = (32usize.saturating_sub(width)) / 2;
+
+        draw_glyphs(
+            rgba,
+            &glyphs,
+            start_x.saturating_add(1),
+            start_y.saturating_add(1),
+            layout,
+            [0, 0, 0, 220],
+        );
+        draw_glyphs(
+            rgba,
+            &glyphs,
+            start_x,
+            start_y,
+            layout,
+            if failed {
+                [255, 80, 80, 255]
+            } else {
+                [255, 255, 255, 255]
+            },
+        );
+    }
+
+    fn row_layout(glyph_count: usize) -> (usize, usize) {
+        if glyph_count <= 2 { (5, 15) } else { (3, 9) }
+    }
+
+    fn draw_glyphs(
+        rgba: &mut [u8],
+        glyphs: &[[u8; 5]],
+        start_x: usize,
+        start_y: usize,
+        layout: (usize, usize, usize),
+        color: [u8; 4],
+    ) {
+        let (scale_x, scale_y, glyph_stride) = layout;
+        for (index, rows) in glyphs.iter().enumerate() {
+            for (y, row) in rows.iter().enumerate() {
+                for x in 0..3 {
+                    if row & (1 << (2 - x)) == 0 {
+                        continue;
+                    }
+                    for pixel_y in 0..scale_y {
+                        for pixel_x in 0..scale_x {
+                            let px = start_x + index * glyph_stride + x * scale_x + pixel_x;
+                            let py = start_y + y * scale_y + pixel_y;
+                            if px < 32 && py < 32 {
+                                let offset = (py * 32 + px) * 4;
+                                rgba[offset..offset + 4].copy_from_slice(&color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn glyph(character: char) -> [u8; 5] {
+        match character {
+            '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+            '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+            '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+            '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+            '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+            '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+            '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+            '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+            '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+            '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+            '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
+            '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
+            _ => [0b000, 0b000, 0b111, 0b000, 0b000],
+        }
     }
 }
 
