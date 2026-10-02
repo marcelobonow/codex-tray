@@ -4,8 +4,8 @@ Aplicativo de bandeja para acompanhar o uso do Codex no Windows e no KDE Plasma.
 
 ## Pré-requisitos
 
-- Rust e Cargo instalados via rustup.
-- Codex CLI instalado e autenticado, com o comando `codex` disponível no `PATH` para executar o aplicativo.
+- Rust stable e Cargo instalados via rustup (o projeto usa edition 2024).
+- Codex CLI instalado e autenticado. Veja [Configuração](#configuração) para a localização do comando `codex`.
 - Para KDE: Linux com uma sessão KDE Plasma e D-Bus de usuário disponível.
 - Para Windows: Visual Studio Build Tools com as ferramentas de C++ e o Windows SDK.
 
@@ -27,15 +27,6 @@ Para executar:
 ./target/release/codex-tray-kde
 ```
 
-Para especificar o target Linux x86_64:
-
-```bash
-rustup target add x86_64-unknown-linux-gnu
-cargo build --release -p codex-tray-kde --target x86_64-unknown-linux-gnu
-```
-
-Executável gerado: `target/x86_64-unknown-linux-gnu/release/codex-tray-kde`.
-
 ## Build para Windows
 
 No PowerShell do Windows:
@@ -52,18 +43,9 @@ Para executar:
 .\target\release\codex-tray-windows.exe
 ```
 
-Para especificar o target Windows x86_64 com MSVC:
-
-```powershell
-rustup target add x86_64-pc-windows-msvc
-cargo build --release -p codex-tray-windows --target x86_64-pc-windows-msvc
-```
-
-Executável gerado: `target\x86_64-pc-windows-msvc\release\codex-tray-windows.exe`.
-
 Se o executável estiver em uso, encerre o aplicativo pelo menu **Sair** antes de recompilar.
 
-As builds de release usam as otimizações configuradas no `Cargo.toml`: LTO, remoção de símbolos e uma unidade de geração de código.
+As builds de release usam LTO, remoção de símbolos, uma unidade de geração de código e abort em caso de panic. Para gerar a build com target explícito e prioridade para tamanho, use a [seção de build otimizada](#build-com-prioridade-para-tamanho--windows-11-e-manjaro-kde).
 
 ## Iniciar automaticamente ao entrar no sistema
 
@@ -74,12 +56,6 @@ Faça a build primeiro e mantenha o executável em um caminho fixo. Se usar a bu
 1. Pressione `Win + R`, digite `shell:startup` e pressione Enter.
 2. Na pasta aberta, crie um **atalho** para `codex-tray-windows.exe`.
 3. Nas propriedades do atalho, confira se **Destino** aponta para o executável e **Iniciar em** aponta para a pasta dele.
-
-Por exemplo, com este repositório em `C:\projetos\codex-tray`, o destino da build x86_64 é:
-
-```text
-C:\projetos\codex-tray\target\x86_64-pc-windows-msvc\release\codex-tray-windows.exe
-```
 
 Para criar o atalho pelo PowerShell, execute na raiz do repositório após gerar a build Windows x86_64:
 
@@ -125,7 +101,7 @@ O aplicativo será iniciado no próximo login na sessão gráfica. Para desativa
 rm ~/.config/autostart/codex-tray.desktop
 ```
 
-Nos dois sistemas, o comando `codex` precisa estar disponível no `PATH` da sessão ao fazer login, e a autenticação do Codex CLI deve estar configurada.
+Confira a [configuração do Codex CLI](#configuração) para que o aplicativo consiga encontrá-lo na sessão ao fazer login.
 
 ## Build com prioridade para tamanho — Windows 11 e Manjaro KDE
 
@@ -210,3 +186,41 @@ Para consultar o tamanho em bytes:
 Essas opções não garantem o menor consumo de RAM em execução. O aplicativo também inicia um processo `codex app-server`; para avaliar o consumo total, meça o tray e esse processo filho. LTO pode aumentar o consumo de RAM durante a compilação.
 
 Referência: [perfis e otimizações do Cargo](https://doc.rust-lang.org/cargo/reference/profiles.html).
+
+## Configuração
+
+O aplicativo inicia `codex app-server` e utiliza o login existente do Codex CLI para consultar os limites de uso da conta.
+
+O comando `codex` deve estar no `PATH` da sessão. No Linux, quando não está no `PATH`, o aplicativo também procura instalações em `NVM_DIR` e `~/.nvm`, dando preferência à versão indicada pelo alias default e usando a versão mais recente disponível como alternativa. A pasta `bin` da instalação encontrada é adicionada ao `PATH` do processo filho.
+
+Defina `CODEX_TRAY_CODEX_BIN` com o caminho completo do executável para substituir a detecção automática. Para startup, essa variável precisa estar disponível na sessão de login.
+
+O uso é atualizado a cada 60 segundos. A variável `CODEX_TRAY_INTERVAL_SECS` aceita valores entre 5 e 3.600 segundos; valores inválidos usam o intervalo padrão. Após uma falha na consulta, o aplicativo tenta novamente após 15 segundos.
+
+## Desenvolvimento
+
+Para compilar e executar em modo de desenvolvimento, use o comando correspondente ao seu sistema:
+
+```bash
+cargo run -p codex-tray-kde
+```
+
+```powershell
+cargo run -p codex-tray-windows
+```
+
+Comandos auxiliares (a compilação do frontend Windows deve ser feita no Windows):
+
+```text
+cargo fmt --all
+cargo check --workspace
+cargo test --workspace
+```
+
+## Estrutura do projeto
+
+- `apps/codex-tray-kde`: interface de bandeja para KDE Plasma no Linux.
+- `apps/codex-tray-windows`: interface de bandeja nativa do Windows.
+- `crates/codex-usage-core`: cliente do Codex App Server e monitor de uso compartilhados.
+
+Veja [ARCHITECTURE.md](ARCHITECTURE.md) para detalhes da implementação.

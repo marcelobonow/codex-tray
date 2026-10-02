@@ -17,6 +17,11 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::{cmp::Ordering as CmpOrdering, ffi::OsStr, path::PathBuf};
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -164,8 +169,7 @@ pub struct MonitorConfig {
 impl Default for MonitorConfig {
     fn default() -> Self {
         Self {
-            codex_binary: std::env::var_os("CODEX_TRAY_CODEX_BIN")
-                .unwrap_or_else(|| "codex".into()),
+            codex_binary: default_codex_binary(),
             poll_interval: interval_from_environment(
                 "CODEX_TRAY_INTERVAL_SECS",
                 DEFAULT_POLL_INTERVAL,
@@ -174,6 +178,121 @@ impl Default for MonitorConfig {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
+}
+
+fn default_codex_binary() -> OsString {
+    if let Some(configured) = std::env::var_os("CODEX_TRAY_CODEX_BIN") {
+        return configured;
+    }
+
+    #[cfg(target_os = "linux")]
+    if !command_is_on_path(OsStr::new("codex"))
+        && let Some(nvm_codex) = find_nvm_codex()
+    {
+        return nvm_codex.into_os_string();
+    }
+
+    "codex".into()
+}
+
+#[cfg(target_os = "linux")]
+fn command_is_on_path(command: &OsStr) -> bool {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .any(|directory| directory.join(command).is_file())
+}
+
+#[cfg(target_os = "linux")]
+fn find_nvm_codex() -> Option<PathBuf> {
+    let mut nvm_directories = Vec::new();
+    if let Some(nvm_dir) = std::env::var_os("NVM_DIR") {
+        nvm_directories.push(PathBuf::from(nvm_dir));
+    }
+    if let Some(home_dir) = std::env::var_os("HOME") {
+        let home_nvm_dir = PathBuf::from(home_dir).join(".nvm");
+        if !nvm_directories.contains(&home_nvm_dir) {
+            nvm_directories.push(home_nvm_dir);
+        }
+    }
+
+    nvm_directories.iter().find_map(|nvm_dir| {
+        let versions_dir = nvm_dir.join("versions/node");
+        let entries = std::fs::read_dir(versions_dir).ok()?;
+        let mut candidates: Vec<_> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let version = entry.file_name().into_string().ok()?;
+                let bin_dir = entry.path().join("bin");
+                let codex = bin_dir.join("codex");
+                (codex.is_file() && bin_dir.join("node").is_file()).then_some((version, codex))
+            })
+            .collect();
+
+        candidates.sort_by(|(left, _), (right, _)| compare_nvm_versions(right, left));
+
+        let preferred_version = preferred_nvm_version(nvm_dir);
+        preferred_version
+            .as_deref()
+            .and_then(|preferred| {
+                candidates
+                    .iter()
+                    .find(|(version, _)| nvm_version_matches_alias(version, preferred))
+                    .map(|(_, codex)| codex.clone())
+            })
+            .or_else(|| candidates.first().map(|(_, codex)| codex.clone()))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn preferred_nvm_version(nvm_dir: &Path) -> Option<String> {
+    let alias = std::fs::read_to_string(nvm_dir.join("alias/default")).ok()?;
+    let alias = alias.trim();
+
+    if let Some(lts_name) = alias.strip_prefix("lts/") {
+        if lts_name != "*" {
+            return std::fs::read_to_string(nvm_dir.join("alias/lts").join(lts_name))
+                .ok()
+                .map(|version| version.trim().to_owned());
+        }
+
+        return std::fs::read_dir(nvm_dir.join("alias/lts"))
+            .ok()?
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+            .map(|version| version.trim().to_owned())
+            .max_by(|left, right| compare_nvm_versions(left, right));
+    }
+
+    Some(alias.to_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn nvm_version_matches_alias(version: &str, alias: &str) -> bool {
+    let version = nvm_version_components(version);
+    let alias = nvm_version_components(alias);
+    !alias.is_empty() && version.starts_with(&alias)
+}
+
+#[cfg(target_os = "linux")]
+fn compare_nvm_versions(left: &str, right: &str) -> CmpOrdering {
+    nvm_version_components(left).cmp(&nvm_version_components(right))
+}
+
+#[cfg(target_os = "linux")]
+fn nvm_version_components(version: &str) -> Vec<u64> {
+    version
+        .trim_start_matches('v')
+        .split('.')
+        .map(|component| {
+            component
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+                .parse()
+                .unwrap_or_default()
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -321,6 +440,22 @@ impl CodexAppServer {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+
+        #[cfg(unix)]
+        if let Some(node_directory) = Path::new(&config.codex_binary)
+            .parent()
+            .filter(|directory| directory.join("node").is_file())
+        {
+            let mut paths = vec![node_directory.to_path_buf()];
+            paths.extend(
+                std::env::var_os("PATH")
+                    .into_iter()
+                    .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>()),
+            );
+            if let Ok(path) = std::env::join_paths(paths) {
+                command.env("PATH", path);
+            }
+        }
 
         #[cfg(all(target_os = "windows", not(debug_assertions)))]
         {
