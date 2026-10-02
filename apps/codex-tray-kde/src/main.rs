@@ -32,7 +32,7 @@ mod linux {
         }
 
         fn apply_snapshot(&mut self, snapshot: UsageSnapshot) {
-            self.status_text = snapshot.summary();
+            self.status_text = snapshot.menu_status(SystemTime::now());
             self.tooltip = snapshot.tooltip(SystemTime::now());
             self.failed = false;
         }

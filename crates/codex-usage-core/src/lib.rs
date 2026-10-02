@@ -101,6 +101,43 @@ impl UsageSnapshot {
         )
     }
 
+    pub fn menu_status(&self, now: SystemTime) -> String {
+        let Some(bucket) = self.buckets.first() else {
+            return "—/—".to_owned();
+        };
+        let format_window = |window: &UsageWindow| {
+            let minutes = window
+                .resets_at
+                .duration_since(now)
+                .unwrap_or_default()
+                .as_secs()
+                / 60;
+            let days = minutes / 1440;
+            let hours = minutes % 1440 / 60;
+            let minutes = minutes % 60;
+            let mut remaining = String::new();
+            if days > 0 {
+                remaining.push_str(&format!("{days}d"));
+            }
+            if hours > 0 {
+                remaining.push_str(&format!("{hours}h"));
+            }
+            if minutes > 0 || remaining.is_empty() {
+                remaining.push_str(&format!("{minutes}m"));
+            }
+            format!("{remaining}: {}%", rounded_percent(window.used_percent))
+        };
+        format!(
+            "{}/{}",
+            format_window(&bucket.primary),
+            bucket
+                .secondary
+                .as_ref()
+                .map(format_window)
+                .unwrap_or_else(|| "—".to_owned())
+        )
+    }
+
     pub fn tooltip(&self, _now: SystemTime) -> String {
         self.summary()
     }

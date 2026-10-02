@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }));
 
     let menu = Menu::new();
-    let status_item = MenuItem::new("Uso 5 horas: — / Semanal: —", false, None);
+    let status_item = MenuItem::new("—/—", false, None);
     let separator = PredefinedMenuItem::separator();
     let quit_item = MenuItem::new("Sair", true, None);
     menu.append(&status_item)?;
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn apply_snapshot(tray: &tray_icon::TrayIcon, status_item: &MenuItem, snapshot: &UsageSnapshot) {
-    status_item.set_text(snapshot.summary());
+    status_item.set_text(snapshot.menu_status(SystemTime::now()));
     if let Err(error) = tray.set_tooltip(Some(snapshot.tooltip(SystemTime::now()))) {
         eprintln!("[Codex Tray] Erro ao atualizar tooltip: {error}");
     }
