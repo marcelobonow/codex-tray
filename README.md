@@ -1,11 +1,11 @@
 # Codex Tray
 
-Aplicativo de bandeja para acompanhar o uso do Codex no Windows e no KDE Plasma. O menu mostra o tempo restante até o reset e o percentual usado em cada janela, por exemplo: `2h35m: 35%/1d8h24m: 24%`.
+Aplicativo de bandeja para acompanhar os limites de uso de **Codex**, **Claude**, **Command Code** e **Antigravity** no Windows e no KDE Plasma. O menu mostra o tempo restante até o reset e o percentual usado em cada janela, por exemplo: `2h35m: 35%/1d8h24m: 24%`.
 
 ## Pré-requisitos
 
 - Rust stable e Cargo instalados via rustup (o projeto usa edition 2024).
-- Codex CLI instalado e autenticado. Veja [Configuração](#configuração) para a localização do comando `codex`.
+- Para usar o provedor padrão (**Codex**): Codex CLI instalado e autenticado. Veja [Configuração](#configuração) para a localização do comando `codex` e dos demais provedores.
 - Para KDE: Linux com uma sessão KDE Plasma e D-Bus de usuário disponível.
 - Para Windows: Visual Studio Build Tools com as ferramentas de C++ e o Windows SDK.
 
@@ -189,11 +189,62 @@ Referência: [perfis e otimizações do Cargo](https://doc.rust-lang.org/cargo/r
 
 ## Configuração
 
-O aplicativo inicia `codex app-server` e utiliza o login existente do Codex CLI para consultar os limites de uso da conta.
+### Seleção e persistência de provedor
+
+Clique com o botão direito no ícone da bandeja e abra o submenu **Provedor** para alternar em tempo real entre **Codex** (padrão), **Claude**, **Command Code** e **Antigravity**.
+
+A escolha é salva automaticamente em disco no arquivo `config.json` para ser restaurada após reiniciar o computador:
+
+- **Linux**: `$XDG_CONFIG_HOME/codex-tray/config.json` (ou `$HOME/.config/codex-tray/config.json`).
+- **Windows**: `%APPDATA%\codex-tray\config.json`.
+- **Caminho personalizado**: defina `CODEX_TRAY_CONFIG_PATH` com o caminho completo do arquivo JSON.
+
+Ordem de precedência na inicialização:
+
+1. Variável `CODEX_TRAY_PROVIDER` (`codex`, `claude`, `command-code` ou `antigravity`), quando definida e válida.
+2. Provedor salvo em `config.json`.
+3. `codex` (padrão).
+
+### Codex
+
+Para o provedor **Codex**, o aplicativo inicia `codex app-server` e utiliza o login existente do Codex CLI para consultar os limites de uso da conta.
 
 O comando `codex` deve estar no `PATH` da sessão. No Linux, quando não está no `PATH`, o aplicativo também procura instalações em `NVM_DIR` e `~/.nvm`, dando preferência à versão indicada pelo alias default e usando a versão mais recente disponível como alternativa. A pasta `bin` da instalação encontrada é adicionada ao `PATH` do processo filho.
 
 Defina `CODEX_TRAY_CODEX_BIN` com o caminho completo do executável para substituir a detecção automática. Para startup, essa variável precisa estar disponível na sessão de login.
+
+### Antigravity
+
+Para o provedor **Antigravity**, o aplicativo executa automaticamente a CLI oficial do Antigravity (`agy -p /usage --output-format json`) sem gastar tokens e utilizando o login já existente do `agy`, sem necessidade de configurar variáveis de ambiente.
+
+No Linux, além do `PATH` da sessão, o aplicativo também procura o binário `agy` em `~/.local/bin/agy` e `~/.gemini/antigravity-cli/bin/agy`. Caso prefira sobrescrever o comando ou usar um arquivo JSON estático, defina `CODEX_TRAY_ANTIGRAVITY_CMD`, `CODEX_TRAY_ANTIGRAVITY_USAGE_FILE` ou salve o JSON em `antigravity-usage.json`.
+
+### Claude, Command Code e Antigravity (variáveis e arquivos)
+
+Os provedores **Claude**, **Command Code** e **Antigravity** aceitam um comando personalizado por variável de ambiente (que deve imprimir JSON válido na saída padrão) ou a leitura de um arquivo JSON local:
+
+| Provedor | Variável de comando | Variável de arquivo | Arquivo padrão (na pasta do `config.json`) | Comando padrão |
+| --- | --- | --- | --- | --- |
+| Claude | `CODEX_TRAY_CLAUDE_CMD` | `CODEX_TRAY_CLAUDE_USAGE_FILE` | `claude-usage.json` | — |
+| Command Code | `CODEX_TRAY_COMMAND_CODE_CMD` | `CODEX_TRAY_COMMAND_CODE_USAGE_FILE` | `command-code-usage.json` | — |
+| Antigravity | `CODEX_TRAY_ANTIGRAVITY_CMD` | `CODEX_TRAY_ANTIGRAVITY_USAGE_FILE` | `antigravity-usage.json` | `agy -p /usage --output-format json` |
+
+São aceitos os formatos JSON:
+- **Antigravity (`agy -p /usage --output-format json`)**: `{ "command": { "name": "usage", "data": { "groups": [{ "name": "Gemini Models", "buckets": [{ "window": "5h", "remaining_fraction": 0.92, "reset_time": "2026-11-22T20:55:53Z" }, { "window": "weekly", "remaining_fraction": 0.92, "reset_time": "2026-11-28T17:36:26Z" }] }] } } }` (também compatível com `antigravity-usage --json`)
+- **Claude Code status line**: `{ "rate_limits": { "five_hour": { "used_percentage": 15.0, "resets_at": 1744372800 }, "seven_day": { ... } } }`
+- **Genérico**: `{ "primary": { "used_percent": 42.5, "window_duration_mins": 300, "resets_at": 1744372800 }, "secondary": { ... } }`
+- **Codex `WireRateLimits`**: `{ "rateLimits": { ... } }` ou `{ "rateLimitsByLimitId": { ... } }`
+
+### Logs
+
+O aplicativo registra eventos de inicialização, troca de provedor, atualizações e erros (sem dados de autenticação) em `codex-tray.log`, na mesma pasta do `config.json` (com rotação automática para `codex-tray.log.old` ao atingir 256 KB):
+
+- **Linux:** `$XDG_CONFIG_HOME/codex-tray/codex-tray.log` (ou `~/.config/codex-tray/codex-tray.log`).
+- **Windows:** `%APPDATA%\codex-tray\codex-tray.log`.
+- **Abrir pelo menu:** clique com o botão direito no ícone da bandeja e selecione **Abrir logs** para abrir o arquivo no editor de texto padrão.
+- **Variáveis opcionais:** `CODEX_TRAY_LOG_PATH` define um caminho personalizado e `CODEX_TRAY_LOG=0` desativa a gravação de logs.
+
+### Intervalo de atualização
 
 O uso é atualizado a cada 60 segundos. A variável `CODEX_TRAY_INTERVAL_SECS` aceita valores entre 5 e 3.600 segundos; valores inválidos usam o intervalo padrão. Após uma falha na consulta, o aplicativo tenta novamente após 15 segundos.
 
